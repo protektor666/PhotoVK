@@ -1,0 +1,966 @@
+/* 
+	Не надо смотреть сюда, я писал этот код много лет назад :)
+	Сам руки бы себе поотрывал
+	
+	По всем вопросам:
+	yeldar@kurmangaliyev.kz
+ 	Курмангалиев Ельдар
+*/
+
+var apiVersion = "5.101";
+var accessToken;
+
+var searchResults = {};
+var mapOptions = {};
+var applicationOptions = 
+{
+	objectsPerPage: 100,
+	minClusterSize: 5,
+	clustererMaxZoom: 17,
+	presetClusterer: 'islands#blueClusterIcons',
+	presetPlacemarkGirl: 'islands#redCircleDotIcon',
+	presetPlacemarkBoy: 'islands#blueCircleDotIcon',
+	presetPlacemarkUnknown: 'islands#blackCircleDotIcon',
+	presetPlacemarkCommunity: 'islands#brownCircleDotIcon',
+	fastUpdate: false,
+	photosAmountLimit: 3000,
+	loadPortion: 250,
+	failedAttemptsLimit: 10,
+	defined: 
+	{
+		pm: 
+		{
+			0: 'закрыты',
+			1: 'открыты'
+		},
+		sex:
+		{
+			0: 'Не указан',
+			1: 'Женский',
+			2: 'Мужской'
+		},
+		relation:
+		{			
+			1: 'Свободен(-на)',
+			2: 'В отношениях',
+			3: 'Помолвлен(-а)',
+			4: 'Женат/замужем',
+			5: 'Всё сложно',
+			6: 'В активном поиске',
+			7: 'Влюблен/влюблена'
+		}
+	},
+	mapInit:
+	{
+		center: [53.910888, 72.907447],
+		zoom: 2,
+		behaviors: ['default', 'scrollZoom', 'drag'],
+		controls: ['searchControl', 'typeSelector', 'zoomControl', 'rulerControl', 'fullscreenControl', 'geolocationControl', 'fullscreenControl']
+	}
+};
+var searchOptions = 
+{
+	dateTo: new Date(),
+	dateFrom: new Date(new Date().getFullYear() - 1, new Date().getMonth(), new Date().getDate()),
+	radius: 800,
+	type: 'latest',
+	position: [0.0, 0.0],
+	filter:
+	{
+		showUsers: true,
+		showGroups: true,
+		showBoys: true,
+		showGirls: true,
+		showUnknownSex: true,
+		showCantWrite: true,
+		useNameFilter: false,
+		showNotSingle: true,
+		name_query: ""
+	}
+};
+var initOptions =
+{
+	map: false,
+	dom: false,
+	interval: undefined
+};
+
+
+$(document).ready(function() {
+	accessToken = $("[name=access_token]").val();
+	if (accessToken && accessToken.length)
+	{
+		console.log("DOM ready: " + new Date());
+		initOptions.interval = setInterval(function() {
+			if (initOptions.map && initOptions.dom) 
+			{
+				clearInterval(initOptions.interval);
+				AllInitialized();
+			}
+		}, 250);
+	} else {
+		console.log("No access token, waiting for authentication");
+	}
+});
+
+$(window).load(DocumentInitialized);
+ymaps.ready(MapInitialized);
+
+function DocumentInitialized()
+{
+	console.log("DOM with images ready: " + new Date());
+	initOptions.dom = true;
+}
+
+function MapInitialized()
+{
+	console.log("YMaps ready: " + new Date());
+	initOptions.map = true;
+}
+
+function AllInitialized()
+{
+	console.log("Photo-Map ready. Start scripts: " + new Date());
+	$("nav").slideDown(2000);	
+	$("#vk_groups-title").slideDown();
+	$("#options").fadeIn();
+	$("#results-map").fadeIn();
+	$("#results-button").fadeIn();
+	$("#footer").fadeIn();
+	
+	InitializeFastLink();
+	
+	LoadYandexMaps();
+	
+	InitializeControls();
+
+	$(window).scroll(function(e)
+	{
+		ChooseCorrectNav();
+	});
+	
+	if (typeof fastLinkOptions !== "undefined" && fastLinkOptions.success == true)
+	{
+		DrawCircle();
+		$("#searchButton").removeClass("inactive");
+		$("#searchButton").click();
+	}
+}
+
+// Технические скрипты
+function SaveFastLink()
+{
+	var objectToSave = {};
+	objectToSave.search = searchOptions;
+	
+	objectToSave.map = {};
+	objectToSave.map.center = mapOptions.searchMap.getCenter();
+	objectToSave.map.zoom = mapOptions.searchMap.getZoom();
+	
+	var result = encodeURIComponent(JSON.stringify(objectToSave, null, '\t'));
+	
+	$.ajax({
+		url: "./fastlink/",
+		type: "POST",
+		dataType: "json",
+		data: "options="+result,
+		contentType: "application/x-www-form-urlencoded; charset=utf-8",
+		success: function(e)
+		{
+			if (e.result == true)
+			{
+				ShowFastLinkInformation(e.ID);
+			} else {
+				alert("Не удалось получить быструю ссылку. Ошибка: " + e.error);
+			}
+		}
+	});	
+}
+
+function InitializeFastLink()
+{
+	if (typeof fastLinkOptions == "undefined" || fastLinkOptions.success !== true) return;
+	
+	searchOptions = fastLinkOptions.options.search;	
+	searchOptions.dateFrom = new Date(searchOptions.dateFrom);
+	searchOptions.dateTo = new Date(searchOptions.dateTo);
+	
+	applicationOptions.mapInit.center = fastLinkOptions.options.map.center;
+	applicationOptions.mapInit.zoom = fastLinkOptions.options.map.zoom;
+}
+
+function setSearchType(type)
+{
+	searchOptions.type = type;
+	switch (type)
+	{
+		case 'best':
+			$("#option-query-form").slideUp(1);
+			$("#option-date-form").slideDown();
+			$("#option-radius-form").slideDown();
+			$("#results-map").slideDown();
+			break;
+		case 'latest':
+			$("#option-date-form").slideUp(1);
+			$("#option-query-form").slideUp(1);
+			$("#option-radius-form").slideDown();
+			$("#results-map").slideDown();
+			break;
+		case 'query':
+			$("#option-date-form").slideUp(1);
+			$("#option-radius-form").slideUp(1);
+			$("#results-map").slideUp(1);
+			$("#option-query-form").slideDown();
+			break;
+	}
+}
+
+function SetCurrentPage(page)
+{
+	if (page >= searchResults.pages) 
+	{
+		$(".pager-next").addClass("disabled");
+		page = searchResults.pages;
+	} else $(".pager-next").removeClass("disabled");
+	
+	if (page <= 1) 
+	{
+		$(".pager-previous").addClass("disabled");
+		page = 1;
+	} else $(".pager-previous").removeClass("disabled");
+	
+	searchResults.currentPage = page;
+	
+	$(".pager-current").find('a').text(searchResults.currentPage + " из " + searchResults.pages);
+	DrawPhotos();
+}
+
+function StartDownloading()
+{
+	if (searchResults.isInProgress) DownloadingComplete("Restart search.");
+	
+	searchResults = {};
+	searchResults.isInProgress = true;
+	searchOptions.isTerminated = false;
+	
+	$("#results-list-complete").fadeOut();
+	$("#results-list-loading").fadeIn();
+	$("#searchButton").addClass("disabled");
+	$("#empty-results-alert").fadeOut();
+	
+	SetProgress(0);
+	$("#loading-information").text("");
+	
+	MakeQuery(0, "GetPhotosCountCompleted");
+}
+
+function GetPhotosCountCompleted(object)
+{
+	searchResults.totalCount = object.response.count;
+	searchResults.photosList = [];
+	searchResults.finalList = [];
+	searchResults.photosRepository = {};
+	searchResults.usersInfo = {};
+	searchOptions.currentOffset = 0;
+	
+	MakeQuery(1, "GetPhotosByOffsetCompleted");
+}
+
+function GetPhotosByOffsetCompleted(object)
+{
+	var user_ids = "5369654";
+	
+	if (!object.response.items || !object.response.items.length)
+		searchResults.failedAttempts = searchResults.failedAttempts + 1;
+	else
+		searchResults.failedAttempts = 0;
+	
+	searchOptions.currentOffset = searchOptions.currentOffset + applicationOptions.loadPortion;
+	
+	searchResults.previousCount = searchResults.photosList.length;
+	
+	for (var j = 1; j < object.response.items.length; j++)
+	{
+		searchResults.failedAttempts = 0;
+		var item = object.response.items[j];
+		searchResults.photosRepository[item.id] = item;
+		searchResults.photosList.push(item.id);
+		if (item.owner_id > 0) user_ids = user_ids + "," + item.owner_id;
+	}
+	
+	if (searchOptions.isTerminated == true)
+	{
+		console.log("User cancelled.");
+	}
+	
+	if (searchOptions.currentOffset >= searchResults.totalCount)
+	{
+		console.log("No more photos provided by VK API.");
+		searchOptions.isTerminated = true;
+	}
+	
+	if (searchResults.finalList.length >= applicationOptions.photosAmountLimit)
+	{
+		console.log("Total photos count limit exceeded.");
+		searchOptions.isTerminated = true;
+	}
+	
+	if (searchResults.failedAttempts >= applicationOptions.failedAttemptsLimit)
+	{
+		console.log("Failed requests count limit exceeded.");
+		searchOptions.isTerminated = true;
+	}
+	
+	MakeUsersQuery(user_ids, "GetUserInfoCompleted");
+}
+
+function MakeUsersQuery(user_ids, callback)
+{
+	$.ajax({
+		url: "https://api.vk.com/method/users.get",
+		type: "POST",
+		dataType: "script",
+		data: "v=" + apiVersion + "&user_ids="+user_ids+"&fields=sex,bdate,can_write_private_message,relation&lang=ru&callback="+callback+"&access_token="+accessToken
+	});
+}
+
+function GetUserInfoCompleted(object)
+{
+	for (var i = 1; i < object.response.length; i++)
+	{
+		var obj = object.response[i];
+		searchResults.usersInfo[obj.id] = obj;
+	}
+	
+	for (var j = searchResults.previousCount; j < searchResults.photosList.length; j++)
+	{
+		var photoInfo = searchResults.photosRepository[searchResults.photosList[j]];
+		if (photoInfo.owner_id > 0)
+		{	
+			var userInfo = searchResults.usersInfo[photoInfo.owner_id];
+			var ok = true;
+			
+			if (searchOptions.filter.showUsers == false) ok = false;
+			if (userInfo.sex == 1 && searchOptions.filter.showGirls == false) ok = false;
+			if (userInfo.sex == 2 && searchOptions.filter.showBoys == false) ok = false; 
+			if (userInfo.sex !== 1 && userInfo.sex !== 2 && searchOptions.filter.showUnknownSex == false) ok = false;
+			if (userInfo.can_write_private_message == 0 && searchOptions.filter.showCantWrite == false) ok = false;
+			if ((searchOptions.filter.useNameFilter == true) && (searchOptions.filter.name_query !== "") && (userInfo.first_name.indexOf(searchOptions.filter.name_query) == -1) && (userInfo.last_name.indexOf(searchOptions.filter.name_query) == -1)) ok = false;
+			if (searchOptions.filter.showNotSingle == false && (userInfo.relation == 2 || userInfo.relation == 3 || userInfo.relation == 4 || userInfo.relation == 7)) ok = false;
+			
+			if (ok) searchResults.finalList.push(photoInfo.id); 
+		}
+		else
+		{
+			if (searchOptions.filter.showGroups == true) 
+				searchResults.finalList.push(photoInfo.id);
+		}
+	}
+	
+	SetProgress(searchResults.finalList.length);
+	
+	if (searchOptions.isTerminated == true)
+	{
+		DownloadingComplete("User info has been loaded too.");
+	} else {
+		MakeQuery(1, "GetPhotosByOffsetCompleted");
+	}
+}
+
+function DownloadingComplete(reason)
+{
+	searchResults.isInProgress = false;
+	
+	console.log("Stop searching. Found " + searchResults.finalList.length + ". Reason: " + reason);
+	$("#results-list-loading").fadeOut();
+	$("#results-list-complete").fadeIn();
+	$("#searchButton").removeClass("disabled");
+	$("#image-nav-3").slideDown(1000);
+	
+	if (searchResults.finalList.length == 0)
+	{
+		DisableControls();
+	} 
+	else 
+	{
+		searchResults.pages = Math.ceil(searchResults.finalList.length / applicationOptions.objectsPerPage);
+		SetCurrentPage(1);
+		DrawPhotos();
+		ScrollPageTo('#results-list-inner');
+	}
+}
+
+function FastDatePick(period)
+{
+	var result = {};
+	var now = new Date();
+	
+	switch (period)
+	{
+		case 'day':
+			result.from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+			result.to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+			break;
+		case 'week':
+			result.from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7, 0, 0, 0);
+			result.to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+			break;
+		case 'month':
+			result.from = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate(), 0, 0, 0);
+			result.to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+			break;
+		case 'year':
+			result.from = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate(), 0, 0, 0);
+			result.to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+			break;
+		case 'whole':
+			result.from = new Date(2006, 9, 10, 0, 0, 0);
+			result.to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+			break;
+	}
+	
+	$("#optionsDateTo").data('datepicker').setValue(result.to);
+	searchOptions.dateTo = result.to;
+		
+	$("#optionsDateFrom").data('datepicker').setValue(result.from);
+	searchOptions.dateFrom = result.from;
+	
+	if (applicationOptions.fastUpdate) $("#searchButton").click();
+}
+
+function MakeQuery(act, callback)
+{
+	setTimeout(function() { // Чтобы не получить ошибку API: Too many requests per second
+		/*
+			act:
+				0 - count only
+				1 - with offset
+		*/
+
+		var request = "https://api.vk.com/method/photos.search?v=" + apiVersion + "&count="+applicationOptions.loadPortion+"&";
+
+		switch (searchOptions.type)
+		{
+			case 'latest':
+				request = request + "lat=" + searchOptions.position[0];
+				request = request + "&long=" + searchOptions.position[1];
+				request = request + "&radius=" + searchOptions.radius;
+				request = request + "&sort=0";				
+				break;
+			case 'best':
+				request = request + "lat=" + searchOptions.position[0];
+				request = request + "&long=" + searchOptions.position[1];
+				request = request + "&radius=" + searchOptions.radius;
+				request = request + "&start_time=" + Math.round(searchOptions.dateFrom / 1000);
+				request = request + "&end_time=" + Math.round(searchOptions.dateTo / 1000);
+				request = request + "&sort=1";	
+				break;
+			case 'query':
+				request = request + "q=" + searchOptions.query;
+				break;
+		}
+
+		if (act == 1) request = request + "&offset=" + searchOptions.currentOffset;
+		request = request + "&callback=" + callback + "&access_token=" + accessToken;
+
+		$.getScript(request);
+	}, 500); 
+}
+
+function DisableControls()
+{
+	$("#results-list-inner").html("");
+	$(".pager").find('li').addClass("disabled");
+	$(".pager-current").find('a').text('-');
+	$("#empty-results-alert").fadeIn();
+}
+
+function DrawPhotos()
+{
+	mapOptions.clusterer.removeAll();
+	
+	var responseHTML = "", i = 1;
+	for (var i = applicationOptions.objectsPerPage * (searchResults.currentPage - 1); i < applicationOptions.objectsPerPage * searchResults.currentPage; i++)
+	{
+		if (i >= searchResults.finalList.length) break;
+		var item = searchResults.photosRepository[searchResults.finalList[i]];
+		
+		try
+		{
+			if (searchOptions.type !== 'query' && typeof item.lat !== "undefined" && typeof item.long !== "undefined")
+			{
+				var presetChoice = '';
+				if (item.owner_id > 0)
+				{
+					switch (searchResults.usersInfo[item.owner_id].sex)
+					{
+						case 1:
+							presetChoice = applicationOptions.presetPlacemarkGirl;
+							break;
+						case 2:
+							presetChoice = applicationOptions.presetPlacemarkBoy;
+							break;
+						default:
+							presetChoice = applicationOptions.presetPlacemarkUnknown;
+							break;
+					}
+				} 
+				else 
+				{
+					presetChoice = applicationOptions.presetPlacemarkCommunity;
+				}				
+				
+				var placemark = new ymaps.Placemark(
+					[item.lat, item.long],
+					{
+					},
+					{
+						preset: presetChoice
+					}
+				);
+				placemark.pid = item.id;
+				placemark.events.add('click', function(e)
+				{
+					var targetPid = e.originalEvent.target.pid;
+					ShowAdditionalInformation(searchResults.photosRepository[targetPid]);
+				});
+				
+				mapOptions.clusterer.add(placemark);
+			} 
+		} catch (e) {
+			console.error("Error while trying to render item: " + e.message);
+		}
+		
+		if (i % 5 == 0) // Начало новой строки
+		{
+			responseHTML = responseHTML + "<div class=\"row row-md-height\">";
+			responseHTML = responseHTML + "<div class=\"col-md-2 col-md-offset-1\">";
+		} else 
+			responseHTML = responseHTML + "<div class=\"col-md-2\">";
+			
+		var mediumImage = item.sizes.filter(function(s) { return s.type === "x"; })[0];
+		responseHTML = responseHTML + "<a href=\"#\" class=\"thumbnail\"><div class=\"thumbnail-img\" style=\"background-image: url('" + mediumImage.url + "');\" data-pid=\""+item.id+"\"></div></a></div>";
+		
+		if (i % 5 == 4) // Конец новой строки
+			responseHTML = responseHTML + "</div>";
+	}
+	
+	$("#results-list-inner").html(responseHTML);
+	
+	var thumbnails = $(".thumbnail-img");
+	$(thumbnails).on('click', function(e)
+	{
+		var pid = $(this).data('pid');
+		ShowAdditionalInformation(searchResults.photosRepository[pid]);
+		e.preventDefault();
+	});
+}
+
+function ShowFastLinkInformation(id)
+{
+	$("#fastlink-information-input").val("http://photo-map.ru/"+id);
+	$("#fastlink-information-overlay").fadeIn(1);
+}
+
+function ShowAdditionalInformation(info)
+{
+	var urlBig = info.sizes.filter(function(s) { return s.type === "x"; })[0].url;
+	$("#photos-information-photo").css("background-image", "url('"+urlBig+"')");
+	
+	$("#photoInfoDirectUrl").attr("href", "https://vk.com/photo"+info.owner_id+"_"+info.id);
+
+	if (info.owner_id > 0)
+	{
+		var user = searchResults.usersInfo[info.owner_id];
+		if (user != undefined)
+		{
+			$("#photoInfoUserInfo").css("display", "block");
+			$("#photoInfoUser-fullname").html("Имя: <b>" + user.first_name + " " + user.last_name + "</b>");
+			
+			if (user.bdate != undefined && user.bdate != '') 
+			{
+				$("#photoInfoUser-bdate").css("display", "block");
+				$("#photoInfoUser-bdate").html("Дата рождения: <b>" + user.bdate + "</b>");
+			}
+			else
+				$("#photoInfoUser-bdate").css("display", "none");
+				
+			if (user.relation != undefined && user.relation != 0) 
+			{
+				$("#photoInfoUser-relation").css("display", "block");
+				$("#photoInfoUser-relation").html("Семейное положение: <b>" + applicationOptions.defined.relation[user.relation] + "</b>");
+			}
+			else
+				$("#photoInfoUser-relation").css("display", "none");
+				
+			if (user.sex != undefined) 
+			{
+				$("#photoInfoUser-sex").css("display", "block");
+				$("#photoInfoUser-sex").html("Пол: <b>" + applicationOptions.defined.sex[user.sex] + "</b>");
+			}
+			else
+				$("#photoInfoUser-sex").css("display", "none");
+				
+			if (user.can_write_private_message != undefined) 
+			{
+				$("#photoInfoUser-pm").css("display", "block");
+				$("#photoInfoUser-pm").html("Личные сообщения <b>" + applicationOptions.defined.pm[user.can_write_private_message] + "</b>");
+			}
+			else
+				$("#photoInfoUser-pm").css("display", "none");
+		} 
+		$("#photoInfoOwnerUrl").attr("href", "https://vk.com/id"+info.owner_id);
+	}
+	else
+	{
+		$("#photoInfoOwnerUrl").attr("href", "https://vk.com/club"+(info.owner_id * -1));
+		$("#photoInfoUserInfo").css("display", "none");
+	}
+	
+	$("#photoInfoSrcBig").attr("href", urlBig);
+	
+	if (info.text == undefined || info.text == "") 
+		$("#photosText").html('Описание фотографии отсутствует.');
+	else
+		$("#photosText").html('Описание: <b>' + info.text + "</b>");
+		
+	var largestImage = info.sizes.sort(function(a, b) { return b.width - a.width; })[0];
+	
+	$("#photoInfoSrcXXXBig").attr("href", largestImage.url);
+
+	$("#photoInfoDate").html("Дата фотографии: <b>"+printDate(info.date) + "</b>");
+	
+	ShowAlert();
+}
+
+// Скрипты карт
+function LoadYandexMaps()
+{
+	if (typeof mapOptions.searchMap !== "undefined")
+	{
+		mapOptions.searchMap.destroy();
+		mapOptions.searchMap = null;
+	}
+	
+	mapOptions.clusterer = new ymaps.Clusterer({
+		preset: applicationOptions.presetClusterer,
+		minClusterSize: applicationOptions.minClusterSize,
+		maxZoom: applicationOptions.clustererMaxZoom
+	});
+
+	mapOptions.searchMap = new ymaps.Map('results-yandex-map', applicationOptions.mapInit);	
+	
+	mapOptions.searchMap.geoObjects.add(mapOptions.clusterer);
+	
+	mapOptions.searchMap.events.add('click', function(e)
+	{
+		searchOptions.position = e.get("coords");
+		DrawCircle();
+		$("#searchButton").removeClass("inactive");
+		if (applicationOptions.fastUpdate) $("#searchButton").click();
+	});
+}
+
+function DrawCircle()
+{
+	if (typeof mapOptions.circle !== "undefined")
+	{
+		mapOptions.searchMap.geoObjects.remove(mapOptions.circle);
+		mapOptions.circle = null;
+	}
+
+	mapOptions.circle = new ymaps.Circle(
+		[searchOptions.position, searchOptions.radius * 2],
+		{}, 
+		{
+			fillColor: "#0000DD40",
+			strokeColor: "#0000DD",
+			strokeOpacity: 0.85,
+			strokeWidth: 2,
+			draggable: false,
+			interactivityModel: 'default#transparent'
+		}
+	);
+
+	mapOptions.circle.events.add('dragend', function(e)
+	{
+		searchOptions.position = e.get('target').geometry.getCoordinates();
+		if (applicationOptions.fastUpdate) $("#searchButton").click();
+	});
+
+	mapOptions.searchMap.geoObjects.add(mapOptions.circle);
+}
+
+// Скрипты отображения
+function ScrollPageTo(selector, fast)
+{
+	var currentPosition = $(document).scrollTop();
+	var requiredPosition = $(selector).position().top - 40;
+	var scrollTime = Math.sqrt(Math.abs(requiredPosition - currentPosition)) * 30;
+	if (scrollTime > 800) scrollTime = 800;
+	$("body,html").animate({
+		"scrollTop": requiredPosition
+	}, scrollTime);
+}
+
+function ShowFilterTip(obj)
+{
+	$("#filter-tip").html($(obj).data('tip'));
+	$("#filter-tip").css({
+		"left": $(obj).offset().left + $(obj).width() - 40,
+		"top": $(obj).offset().top + 25
+	});
+	$("#filter-tip").fadeIn(1);
+	if (typeof applicationOptions.filterTipTimeout !== "undefined")
+		clearTimeout(applicationOptions.filterTipTimeout);
+}
+
+function HideFilterTip()
+{
+	applicationOptions.filterTipTimeout = setTimeout(function(){ $("#filter-tip").fadeOut(1); }, 150);
+}
+
+function InitializeControls()
+{	
+	// Filter table tips
+	$(".elem-with-tip").on('mouseenter', function(e)
+	{
+		ShowFilterTip(this);
+	});
+	$(".elem-with-tip").on('mouseleave', function(e)
+	{
+		HideFilterTip();
+	});
+
+	// Stop link	
+	$("#search-stop-link").on('click', function(e)
+	{
+		searchOptions.isTerminated = true;
+	});
+
+	// Save link	
+	$("#fastlink-save-link").on('click', function(e)
+	{
+		SaveFastLink();
+		e.preventDefault();
+	});
+	
+	// Filter name
+	$("#filter-name-value").val(searchOptions.filter.name_query);
+	$("#filter-name-value").on('input', function()
+	{
+		searchOptions.filter.name_query = $(this).val();
+	});
+	
+	// Filter table switches
+	$(".switch-checkbox").data("size", "small");
+	$(".switch-checkbox").bootstrapSwitch({
+		onColor: 'success',
+		offColor: 'danger',
+		onText: 'ДА',
+		offText: 'НЕТ'
+	});
+	$(".switch-checkbox").on('switchChange.bootstrapSwitch', function(e, state)
+	{
+		var opt = $(this).data("filter-option");
+		searchOptions.filter[opt] = state;
+		if (applicationOptions.fastUpdate) $("#searchButton").click();
+		
+		if (opt == "showUsers")
+		{
+			if (state == false) 
+				$(".option-filter-form-users").slideUp();
+			else 
+				$(".option-filter-form-users").slideDown();
+		}
+		
+		if (opt == "useNameFilter")
+		{
+			if (state == false)
+			{
+				$("#filter-name-value").fadeOut(1);
+			}
+			else
+			{
+				$("#filter-name-value").fadeIn();
+			}
+		}
+	});
+	for (var key in searchOptions.filter)
+	{
+		$(".switch-checkbox[data-filter-option='"+key+"']").bootstrapSwitch('state', searchOptions.filter[key], true);
+	}
+	if (searchOptions.filter['useNameFilter'] == true) $("#filter-name-value").fadeIn();
+	
+	// Alerts window
+	$("#photos-information-overlay").on('click', function(e)
+	{
+		if (e.target == this) $(this).fadeOut();
+	});
+	$("#fastlink-information-overlay").on('click', function(e)
+	{
+		if (e.target == this) $(this).fadeOut();
+	});
+	
+	// Nav
+	$("#image-nav-1").on('click', function(e) { ScrollPageTo('#main'); });
+	$("#image-nav-2").on('click', function(e) { ScrollPageTo('#options'); });
+	$("#image-nav-3").on('click', function(e) { ScrollPageTo('#results-list'); });
+
+	// Radius
+	$('.option-radius').on('click', function(e)
+	{
+		$(this).siblings().removeClass('active');
+		$(this).addClass('active');		
+		searchOptions.radius = $(this).data('radius');
+		DrawCircle();
+		if (applicationOptions.fastUpdate) $("#searchButton").click();
+		e.preventDefault();
+	});
+	$('.option-radius[data-radius='+searchOptions.radius+']').addClass('active');
+	$('.option-radius.active').click();
+	
+	$('.option-type').on('click', function(e)
+	{
+		$(this).siblings().removeClass('active');
+		$(this).addClass('active');		
+		setSearchType($(this).data('type'));
+		if (applicationOptions.fastUpdate) $("#searchButton").click();
+		e.preventDefault();
+	});
+	$('.option-type[data-type='+searchOptions.type+']').addClass('active');
+	$('.option-type.active').click();
+
+	// Datepicker From
+	$("#optionsDateFrom").datepicker({ format: "dd.mm.yyyy", weekStart: 1 })
+	.on('changeDate', function(e)
+	{
+		searchOptions.dateFrom = new Date(e.date);
+		if (applicationOptions.fastUpdate) $("#searchButton").click();
+	})
+	.data('datepicker').setValue(searchOptions.dateFrom);
+	
+	// Datepicker To
+	$("#optionsDateTo").datepicker({ format: "dd.mm.yyyy", weekStart: 1 })
+	.on('changeDate', function(e)
+	{
+		searchOptions.dateTo = new Date(e.date);
+		searchOptions.dateTo.setHours(23);
+		searchOptions.dateTo.setMinutes(59);
+		searchOptions.dateTo.setSeconds(59);
+		if (applicationOptions.fastUpdate) $("#searchButton").click();
+	})
+	.data('datepicker').setValue(searchOptions.dateTo);
+	
+	// Query
+	$("#optionsQuery").val(searchOptions.query);
+	$("#optionsQuery").on('input', function(e)
+	{
+		searchOptions.query = $(this).val();
+		if (applicationOptions.fastUpdate) $("#searchButton").click();
+	});
+	
+	// Enter Key
+	$(window).keypress(function(e)
+	{
+		if (e.which == 13)
+		{
+			$("#searchButton").click();
+		}	
+	});
+	
+	// Search button
+	$("#searchButton").mouseenter(function()
+	{
+		if ($(this).hasClass('inactive') && searchOptions.type != 'query') $("#search-button-warning").css("display", "inline");
+	});
+	$("#searchButton").mouseleave(function()
+	{
+		$("#search-button-warning").css("display", "none");
+	});
+	$("#searchButton").on('click', function()
+	{
+		if ($(this).hasClass('inactive') && searchOptions.type != 'query')
+			$("#search-button-warning").css("font-weight", "bold");
+		else
+		{
+			ScrollPageTo("#searchButton");
+			StartDownloading();
+		}
+	});
+	
+	// Date-Fastpick
+	$(".date-fastpick").on('click', function(e)
+	{
+		FastDatePick($(this).data('period'));
+		e.preventDefault();
+	});
+	
+	// Pager
+	$(".pager-previous").on('click', function(e)
+	{
+		if (!$(this).hasClass('disabled')) 
+		{
+			SetCurrentPage(searchResults.currentPage - 1);
+			ScrollPageTo("#results-list-inner");
+		}
+		e.preventDefault();
+	});
+	$(".pager-next").on('click', function(e)
+	{	
+		if (!$(this).hasClass('disabled')) 
+		{
+			SetCurrentPage(searchResults.currentPage + 1);
+			ScrollPageTo("#results-list-inner");
+		}	
+		e.preventDefault();
+	});
+	$(".pager-current").on('click', function(e)
+	{
+		e.preventDefault();
+	});
+}
+
+function ChooseCorrectNav()
+{
+	$('.image-nav').removeClass('active');
+	$('#image-nav-1').addClass('active');		
+
+	if ($(window).scrollTop() > $("#options").offset().top - 76) 
+	{
+		$('.image-nav').removeClass('active');
+		$('#image-nav-2').addClass('active');
+	}
+	
+	if (($("#results-list").css("display") != "none") && ($(window).scrollTop() > $("#results-list").offset().top - 76)) 
+	{
+		$('.image-nav').removeClass('active');
+		$('#image-nav-3').addClass('active');
+	}
+}
+
+function ShowAlert()
+{
+	$("#photos-information-overlay").fadeIn();
+}
+
+function printDate(unixdate) {
+    var temp = new Date(unixdate*1000);
+    var dateStr = padStr(temp.getDate()) + "." +
+                  padStr(1 + temp.getMonth()) + "." +
+                  padStr(temp.getFullYear()) + "  " + 
+                  padStr(temp.getHours()) + ":" +
+                  padStr(temp.getMinutes()) + ":" +
+                  padStr(temp.getSeconds());
+    return dateStr;
+}
+
+function padStr(i) {
+    return (i < 10) ? "0" + i : "" + i;
+}
+
+function SetProgress(val)
+{
+	$("#loading-information").html("Найдено " + val + " фотографий.<br/>");
+	$("#loading-progress").attr("aria-valuenow", val).css("width", (val / applicationOptions.photosAmountLimit * 100) + "%");
+}
